@@ -51,6 +51,8 @@ int RunDaemon() {
                 ? std::clamp(std::atoi(tokens[4]), 1, kMaxWorkers) : 1;
             const auto comp = (ntok >= 6)
                 ? std::clamp(std::atoi(tokens[5]), -1, 2) : -1;
+            const auto max_pixels = (ntok >= 7)
+                ? static_cast<size_t>(std::strtoull(tokens[6], nullptr, 10)) : 0;
 
             auto* doc = FPDF_LoadDocument(pdf, nullptr);
             if (!doc) {
@@ -59,7 +61,36 @@ int RunDaemon() {
                 continue;
             }
             const auto pages = FPDF_GetPageCount(doc);
+
+            int oversized_page = -1;
+            int oversized_width = 0;
+            int oversized_height = 0;
+            const auto scale = dpi / internal::kPointsPerInch;
+            for (int page_idx = 0; page_idx < pages; ++page_idx) {
+                auto* page = FPDF_LoadPage(doc, page_idx);
+                if (!page) continue;
+                const auto width = static_cast<int>(
+                    FPDF_GetPageWidth(page) * scale + 0.5f);
+                const auto height = static_cast<int>(
+                    FPDF_GetPageHeight(page) * scale + 0.5f);
+                FPDF_ClosePage(page);
+                if (max_pixels > 0 && width > 0 && height > 0 &&
+                    static_cast<size_t>(width) * height > max_pixels) {
+                    oversized_page = page_idx;
+                    oversized_width = width;
+                    oversized_height = height;
+                    break;
+                }
+            }
             FPDF_CloseDocument(doc);
+
+            if (oversized_page >= 0) {
+                std::printf("ERROR pixels too large page=%d width=%d height=%d max=%zu\n",
+                            oversized_page + 1, oversized_width,
+                            oversized_height, max_pixels);
+                std::fflush(stdout);
+                continue;
+            }
 
             int rc;
             if (workers > 1 && pages > 1) {
